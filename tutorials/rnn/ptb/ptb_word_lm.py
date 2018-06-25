@@ -81,7 +81,7 @@ flags.DEFINE_string("save_path", None,
                     "Model output directory.")
 flags.DEFINE_bool("use_fp16", False,
                   "Train using 16-bit floats instead of 32bit floats")
-flags.DEFINE_integer("num_gpus", 1,
+flags.DEFINE_integer("num_gpus", 0,
                      "If larger than 1, Grappler AutoParallel optimizer "
                      "will create multiple training replicas with each GPU "
                      "running one replica.")
@@ -319,6 +319,7 @@ class PTBModel(object):
 
 class SmallConfig(object):
   """Small config."""
+  
   init_scale = 0.1
   learning_rate = 1.0
   max_grad_norm = 5
@@ -326,7 +327,8 @@ class SmallConfig(object):
   num_steps = 20
   hidden_size = 200
   max_epoch = 4
-  max_max_epoch = 13
+#   max_max_epoch = 13
+  max_max_epoch = 7 # fast mode 
   keep_prob = 1.0
   lr_decay = 0.5
   batch_size = 20
@@ -387,6 +389,7 @@ class TestConfig(object):
 
 def run_epoch(session, model, eval_op=None, verbose=False):
   """Runs the model on the given data."""
+  
   start_time = time.time()
   costs = 0.0
   iters = 0
@@ -400,6 +403,7 @@ def run_epoch(session, model, eval_op=None, verbose=False):
     fetches["eval_op"] = eval_op
 
   for step in range(model.input.epoch_size):
+    
     feed_dict = {}
     for i, (c, h) in enumerate(model.initial_state):
       feed_dict[c] = state[i].c
@@ -416,7 +420,8 @@ def run_epoch(session, model, eval_op=None, verbose=False):
       print("%.3f perplexity: %.3f speed: %.0f wps" %
             (step * 1.0 / model.input.epoch_size, np.exp(costs / iters),
              iters * model.input.batch_size * max(1, FLAGS.num_gpus) /
-             (time.time() - start_time)))
+             (time.time() - start_time) )
+            )
 
   return np.exp(costs / iters)
 
@@ -442,6 +447,7 @@ def get_config():
 
 
 def main(_):
+  
   if not FLAGS.data_path:
     raise ValueError("Must set --data_path to PTB data directory")
   gpus = [
@@ -453,8 +459,9 @@ def main(_):
         "which is less than the requested --num_gpus=%d."
         % (len(gpus), FLAGS.num_gpus))
 
-  raw_data = reader.ptb_raw_data(FLAGS.data_path)
-  train_data, valid_data, test_data, _ = raw_data
+  raw_data = reader.ptb_raw_data(FLAGS.data_path) 
+  # test: never seen 
+  train_data, valid_data, test_data, _ = raw_data  
 
   config = get_config()
   eval_config = get_config()
@@ -462,6 +469,7 @@ def main(_):
   eval_config.num_steps = 1
 
   with tf.Graph().as_default():
+    
     initializer = tf.random_uniform_initializer(-config.init_scale,
                                                 config.init_scale)
 
@@ -469,6 +477,7 @@ def main(_):
       train_input = PTBInput(config=config, data=train_data, name="TrainInput")
       with tf.variable_scope("Model", reuse=None, initializer=initializer):
         m = PTBModel(is_training=True, config=config, input_=train_input)
+        
       tf.summary.scalar("Training Loss", m.cost)
       tf.summary.scalar("Learning Rate", m.lr)
 
@@ -486,9 +495,11 @@ def main(_):
                          input_=test_input)
 
     models = {"Train": m, "Valid": mvalid, "Test": mtest}
+    
     for name, model in models.items():
       model.export_ops(name)
     metagraph = tf.train.export_meta_graph()
+    
     if tf.__version__ < "1.1.0" and FLAGS.num_gpus > 1:
       raise ValueError("num_gpus > 1 is not supported for TensorFlow versions "
                        "below 1.1.0")
@@ -503,6 +514,7 @@ def main(_):
       model.import_ops()
     sv = tf.train.Supervisor(logdir=FLAGS.save_path)
     config_proto = tf.ConfigProto(allow_soft_placement=soft_placement)
+    
     with sv.managed_session(config=config_proto) as session:
       for i in range(config.max_max_epoch):
         lr_decay = config.lr_decay ** max(i + 1 - config.max_epoch, 0.0)
